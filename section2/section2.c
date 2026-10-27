@@ -24,6 +24,7 @@ typedef struct
     off_t block_size;
     off_t filesize;
     Result total;
+    const char *filename;
 } PoolArgs;
 
 off_t adjustBoundaries(int fd, off_t offset, off_t filesize)
@@ -60,7 +61,8 @@ void *pool_worker(void *arg)
 
         off_t pos = adjustBoundaries(a->fd, start, a->filesize);    // aligne au debut de la ligne
         off_t real_end = adjustBoundaries(a->fd, end, a->filesize); // ajuste la fin
-
+        printf("[%s] [Thread %d] bloc %d : [%lld, %lld)\n",
+               a->filename, a->thread_id, b, (long long)pos, (long long)real_end);
         char buffer[BUFFER_SIZE + 1];
 
         while (pos < real_end)
@@ -152,6 +154,7 @@ void process_file_pool(const char *filename, int n_blocks, int nthreads,
         args[i].block_size = block_size;
         args[i].filesize = filesize;
         args[i].total = (Result){0, 0, 0};
+        args[i].filename = filename;
 
         int threadCreated = pthread_create(&threads[i], NULL, pool_worker, &args[i]);
 
