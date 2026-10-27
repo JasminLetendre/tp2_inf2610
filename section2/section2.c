@@ -21,6 +21,8 @@ typedef struct
     int thread_id;
     int nthreads;
     int n_blocks;
+    int *next_block;
+    pthread_mutex_t *mutex;
     off_t block_size;
     off_t filesize;
     Result total;
@@ -51,8 +53,20 @@ void *pool_worker(void *arg)
 {
     PoolArgs *a = (PoolArgs *)arg;
 
-    for (int b = a->thread_id; b < a->n_blocks; b += a->nthreads)
+    while (1)
     {
+        pthread_mutex_lock(a->mutex);
+
+        if (*a->next_block >= a->n_blocks)
+        {
+            pthread_mutex_unlock(a->mutex);
+            break; // No more blocks
+        }
+
+        int b = (*a->next_block)++;
+
+        pthread_mutex_unlock(a->mutex);
+
         off_t start = (off_t)b * a->block_size;
         off_t end = start + a->block_size;
 
@@ -61,13 +75,16 @@ void *pool_worker(void *arg)
 
         off_t pos = adjustBoundaries(a->fd, start, a->filesize);    // aligne au debut de la ligne
         off_t real_end = adjustBoundaries(a->fd, end, a->filesize); // ajuste la fin
+
         printf("[%s] [Thread %d] bloc %d : [%lld, %lld)\n",
                a->filename, a->thread_id, b, (long long)pos, (long long)real_end);
+
         char buffer[BUFFER_SIZE + 1];
 
         while (pos < real_end)
         {
             size_t to_read = BUFFER_SIZE;
+
             off_t restant = real_end - pos;
 
             if (restant < (off_t)BUFFER_SIZE)
@@ -144,6 +161,9 @@ void process_file_pool(const char *filename, int n_blocks, int nthreads,
 
     pthread_t threads[nthreads];
     PoolArgs args[nthreads];
+    int next_block = 0;
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+int created = 0;
 
     for (int i = 0; i < nthreads; i++)
     {
@@ -155,6 +175,8 @@ void process_file_pool(const char *filename, int n_blocks, int nthreads,
         args[i].filesize = filesize;
         args[i].total = (Result){0, 0, 0};
         args[i].filename = filename;
+        args[i].next_block = &next_block;
+        args[i].mutex = &mutex;
 
         int threadCreated = pthread_create(&threads[i], NULL, pool_worker, &args[i]);
 
@@ -163,9 +185,11 @@ void process_file_pool(const char *filename, int n_blocks, int nthreads,
             fprintf(stderr, "pthread_create: %s\n", strerror(threadCreated));
             break;
         }
+            created++;
+
     }
 
-    for (int i = 0; i < nthreads; i++)
+    for (int i = 0; i < created; i++)
     {
         pthread_join(threads[i], NULL);
 
@@ -173,6 +197,7 @@ void process_file_pool(const char *filename, int n_blocks, int nthreads,
         *err_total += args[i].total.error;
         *fail_total += args[i].total.failed;
     }
+    pthread_mutex_destroy(&mutex);
 
     close(fd);
 }
@@ -186,16 +211,44 @@ typedef struct
     Result total;
 } pool_args_t;
 
+typedef struct
+{
+    const char *filename;
+    int n_blocks;
+    int nthreads;
+    Result total;
+} FileTask;
+
+void *process_log(void *arg)
+{
+    FileTask *task = arg;
+
+    process_file_pool(task->filename, task->n_blocks, task->nthreads,
+                      &task->total.critical,
+                      &task->total.error,
+                      &task->total.failed);
+
+    return NULL;
+}
+
 void pool_task_wrapper(void *arg)
 {
-    pool_args_t *a = (pool_args_t *)arg;
+    pool_args_t *a = arg;
 
-    a->total = (Result){0, 0, 0};
+    FileTask f1 = {a->log1, a->n_blocks, a->nthreads, {0, 0, 0}};
+    FileTask f2 = {a->log2, a->n_blocks, a->nthreads, {0, 0, 0}};
 
-    process_file_pool(a->log1, a->n_blocks, a->nthreads,
-                      &a->total.critical, &a->total.error, &a->total.failed);
-    process_file_pool(a->log2, a->n_blocks, a->nthreads,
-                      &a->total.critical, &a->total.error, &a->total.failed);
+    pthread_t t1, t2;
+
+    pthread_create(&t1, NULL, process_log, &f1);
+    pthread_create(&t2, NULL, process_log, &f2);
+
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
+    a->total.critical = f1.total.critical + f2.total.critical;
+    a->total.error = f1.total.error + f2.total.error;
+    a->total.failed = f1.total.failed + f2.total.failed;
 }
 
 int main(int argc, char *argv[])
