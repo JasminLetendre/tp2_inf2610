@@ -237,20 +237,5 @@ int main(int argc, char *argv[])
     printf("ERROR: %d\n", args.total.error);
     printf("FAILED_LOGIN: %d\n", args.total.failed);
 
-    FILE *out = fopen("RESULT_THREADS.txt", "w");
-    if (out == NULL)
-    {
-        perror("RESULT_THREADS.txt");
-        return 1;
-    }
-
-    fprintf(out, "Temps d'exécution (pool de %d threads, %d blocs) = %.6f secondes\n",
-            args.nthreads, args.n_blocks, elapsed);
-    fprintf(out, "\nTotal:\n");
-    fprintf(out, "CRITICAL: %d\n", args.total.critical);
-    fprintf(out, "ERROR: %d\n", args.total.error);
-    fprintf(out, "FAILED_LOGIN: %d\n", args.total.failed);
-
-    fclose(out);
     return 0;
 }
