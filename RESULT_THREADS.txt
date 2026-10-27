@@ -1,0 +1,6 @@
+Temps d'exécution (pool de 100 threads, 100 blocs) = 0.200795 secondes
+
+Total:
+CRITICAL: 412
+ERROR: 502
+FAILED_LOGIN: 170
